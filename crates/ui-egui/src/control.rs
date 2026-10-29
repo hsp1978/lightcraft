@@ -12,7 +12,7 @@
 //!   image coordinates (brush strokes, crop handles…) — mapped to screen and injected as real input
 //! - `ui.key {key, shift?, alt?, cmd?}` / `ui.text {text}` / `ui.scroll {dx, dy}`
 //! - `ui.set {view?, panel?, filmstrip?, leftPanel?, zoom?, …}` / `ui.dialog.confirm|cancel`
-//! - `ui.screenshot {path?, headless?}` (headless: CPU-rendered, no compositor needed), `ui.resize {width, height}`, `ui.render {id?, size?, path?}`, `app.quit`
+//! - `ui.screenshot {path?, headless?}` (headless: CPU-rendered, no compositor needed), `ui.resize {width, height}`, `ui.render {id?, size?, path?, inline?}`, `app.quit`
 
 use std::sync::mpsc::Sender;
 
@@ -450,6 +450,8 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                 return err(e);
             }
             let size = p.get("size").and_then(Value::as_u64).unwrap_or(1600) as usize;
+            // `inline` returns the PNG in the reply: a client on another machine can't read `path`
+            let inline = p.get("inline").and_then(Value::as_bool).unwrap_or(false);
             match app.session.render_now(id, size, size) {
                 Ok(r) => match (s("path"), app.services.png.as_ref()) {
                     (Some(path), Some(png)) => {
@@ -459,6 +461,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                             None => err("no writer"),
                         }
                     }
+                    (None, Some(png)) if inline => {
+                        let bytes = png(&r.image);
+                        ok(json!({"width": r.image.width, "height": r.image.height, "png": lightcraft_engine::base64::encode(&bytes)}))
+                    }
+                    (None, None) if inline => err("ui.render: this build has no PNG encoder for `inline`"),
                     _ => ok(json!({"width": r.image.width, "height": r.image.height, "histogram": r.histogram})),
                 },
                 Err(e) => err(e),
